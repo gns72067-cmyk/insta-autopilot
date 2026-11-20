@@ -1,0 +1,14 @@
+{
+  "name": "insta-autopilot",
+  "owner": {
+    "name": "insta-autopilot"
+  },
+  "plugins": [
+    {
+      "name": "insta-autopilot",
+      "source": "./",
+      "description": "인스타 카드뉴스·10초 릴스 자동화 — 주제만 고르면 조사·훅·사진·카드·MP4·캡션까지 만들고, 검토 화면(웹)에서 확인·수정·업로드",
+      "version": "1.1.0"
+    }
+  ]
+}
