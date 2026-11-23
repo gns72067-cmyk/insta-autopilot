@@ -309,7 +309,7 @@ def cmd_press(a) -> int:
                   "   예: \"언론사 사진 사용 권한을 확인했고 사용 책임은 나에게 있음\"")
             return 2
         pp = {"enabled": True, "confirm_text": a.confirm.strip(), "enabled_at": now}
-        print("✔ 언론사 사진 사용 — 팩트 시트 출처 기사의 대표 사진을 후보 맨 앞에 넣습니다 (출처: 사진: <언론사>)")
+        print("✔ 언론사 사진 사용 — 팩트 시트 출처 기사의 대표 사진을 후보 맨 앞에 넣습니다")
     else:
         pp = {"enabled": False, "disabled_at": now}
         print("✔ 언론사 사진 사용 안 함")
@@ -318,6 +318,16 @@ def cmd_press(a) -> int:
     with open(paths.home() / "press_photos_log.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps({"at": now, "action": a.press_cmd, "confirm_text": getattr(a, "confirm", None)},
                            ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_photo_credit(a) -> int:
+    cfg = cfgmod.load_config()
+    cfg["photo_credit"] = a.mode
+    cfgmod.save_config(cfg)
+    print("✔ 사진 출처: " + ("카드·캡션 모두 표기" if a.mode == "on" else
+                           "카드엔 안 씀, 캡션엔 라이선스상 필요한 사진(Wikimedia·Flickr CC·공공누리)만")
+          + " — 다음에 고르는 사진부터 적용")
     return 0
 
 
@@ -370,6 +380,8 @@ def main() -> int:
     q = ps.add_parser("on")
     q.add_argument("--confirm", required=True)
     ps.add_parser("off")
+    p = sub.add_parser("photo-credit")
+    p.add_argument("mode", choices=["on", "off"])
     p = sub.add_parser("photo-fit")
     p.add_argument("fit", choices=["fill", "inset", "auto"])
     p = sub.add_parser("set-key")
@@ -379,7 +391,8 @@ def main() -> int:
     try:
         return {"init": cmd_init, "catalog": cmd_catalog, "preset": cmd_preset, "import-asset": cmd_import_asset,
                 "validate": cmd_validate, "sample": cmd_sample, "save": cmd_save, "show": cmd_show,
-                "set-key": cmd_set_key, "press": cmd_press, "photo-fit": cmd_photo_fit}[a.cmd](a)
+                "set-key": cmd_set_key, "press": cmd_press, "photo-fit": cmd_photo_fit,
+                "photo-credit": cmd_photo_credit}[a.cmd](a)
     except (RulesError, FileNotFoundError, ValueError) as e:
         print(f"✘ {e}")
         return 2

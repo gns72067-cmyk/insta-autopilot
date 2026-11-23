@@ -157,9 +157,9 @@ def preflight(job: Path, at: dt.datetime | None = None, client=None, method: str
         ok4 = not parts["photo_lines"]
         add(4, "사진 라이선스", ok4, "사진 없음(C)" if ok4 else "C 템플릿인데 캡션에 사진 출처 줄이 있음")
     else:
-        want = photo.get("caption_credit") or photo.get("credit")
+        want = photo.get("caption_credit") if "caption_credit" in photo else photo.get("credit")
         okp = photo.get("source") in PHOTO_SOURCES and (job / "credits.txt").is_file()
-        same = bool(parts["photo_lines"]) and checks.ws(parts["photo_lines"][0]) == checks.ws(want)
+        same = (not want) or (bool(parts["photo_lines"]) and checks.ws(parts["photo_lines"][0]) == checks.ws(want))
         add(4, "사진 라이선스", okp and same,
             f"{photo.get('source')} · {photo.get('license')}" + ("" if same else f" · 캡션 사진 출처 줄 ≠ {want}"))
     # 5 캡션

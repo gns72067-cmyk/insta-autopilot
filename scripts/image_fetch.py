@@ -34,6 +34,13 @@ def _ext(content_type: str, url: str) -> str:
     return ".jpg"
 
 
+ATTRIBUTION_REQUIRED = {"wikimedia", "flickr", "kogl1"}  # 라이선스가 저작자·출처 표시를 조건으로 하는 출처
+
+
+def credit_mode(cfg: dict) -> str:
+    return "on" if str(cfg.get("photo_credit", "off")).lower() == "on" else "off"
+
+
 def fetch(job: Path, pick: int, credit_override: str | None = None) -> dict:
     meta = paths.read_json(job / "meta.json")
     pc = paths.read_json(job / "photo_candidates.json")
@@ -77,13 +84,21 @@ def fetch(job: Path, pick: int, credit_override: str | None = None) -> dict:
         dest.write_bytes(r.content)
         file_url = url
 
-    credit = credit_override or cand["credit"]
-    caption_line = credit + (" (편집)" if cand.get("share_alike") else "")
+    full = credit_override or cand["credit"]
+    full_line = full + (" (편집)" if cand.get("share_alike") else "")
+    required = cand["source"] in ATTRIBUTION_REQUIRED
+    if credit_mode(cfg) == "on" or credit_override:
+        credit, caption_line = full, full_line
+    else:
+        # 출처 표기 끔: 카드엔 안 씀. 라이선스가 저작자 표시를 조건으로 하는 사진(CC·공공누리)만 캡션에 남긴다
+        credit, caption_line = "", (full_line if required else "")
     photo = {"path": str(dest), "credit": credit, "caption_credit": caption_line, "source": cand["source"],
+             "credit_full": full_line, "attribution_required": required,
              "license": cand.get("license"), "license_url": cand.get("license_url"), "author": cand.get("author"),
              "page_url": cand.get("page_url"), "file_url": file_url, "title": cand.get("title"), "pick": pick,
              "fetched_at": dt.datetime.now().astimezone().isoformat(timespec="seconds")}
-    lines = ["# 사진 출처 (카드 credit 슬롯 · 캡션 사진 출처 줄)", f"카드 credit: {credit}", f"캡션 출처 줄: {caption_line}",
+    lines = ["# 사진 출처 (카드 credit 슬롯 · 캡션 사진 출처 줄)", f"카드 credit: {credit or '(표기 안 함)'}",
+             f"캡션 출처 줄: {caption_line or '(쓰지 않음)'}", f"원래 출처 문구: {full_line}",
              f"출처 종류: {cand['source']}", f"라이선스: {cand.get('license')}" + (f" ({cand['license_url']})" if cand.get("license_url") else ""),
              f"저작자: {cand.get('author')}", f"원본 페이지: {cand.get('page_url') or '이용자 라이브러리'}",
              f"파일: {file_url or cand.get('local_path')}", f"받은 시각: {photo['fetched_at']}"]

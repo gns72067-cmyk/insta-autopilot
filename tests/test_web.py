@@ -166,6 +166,38 @@ def test_caption_credit_follows_photo(job):
     assert "사진: 새 작가 (CC0)" in (job / "caption.txt").read_text(encoding="utf-8")
 
 
+def test_caption_credit_removed_when_not_needed(job):
+    from common import paths
+
+    (job / "caption.txt").write_text("본문\n출처: 한겨레\n사진: 옛 작가 (CC BY 4.0)\n#a\n", encoding="utf-8")
+    m = paths.read_json(job / "meta.json")
+    m["photo"] = {"credit": "", "caption_credit": "", "source": "press"}
+    paths.write_json(job / "meta.json", m)
+    assert web.fix_caption_credit(job, "사진: 옛 작가 (CC BY 4.0)")
+    assert (job / "caption.txt").read_text(encoding="utf-8") == "본문\n출처: 한겨레\n#a\n"
+
+
+def test_photo_credit_off_keeps_only_required(tmp_path, monkeypatch):
+    import image_fetch
+    from common import config as cfgmod, paths
+
+    lib = tmp_path / "p.jpg"
+    lib.write_bytes(b"x")
+    for src, want_cap in (("library", ""), ("wikimedia", "사진: J / Wikimedia Commons (CC BY 4.0)")):
+        job = tmp_path / src
+        job.mkdir()
+        paths.write_json(job / "meta.json", {"handle": "a"})
+        paths.write_json(job / "photo_candidates.json", {"candidates": [
+            {"no": 1, "source": "library", "local_path": str(lib), "credit": "사진: J / Wikimedia Commons (CC BY 4.0)"}]})
+        monkeypatch.setattr(cfgmod, "load_config", lambda: {"photo_credit": "off"})
+        orig = image_fetch.ATTRIBUTION_REQUIRED
+        if src == "wikimedia":
+            monkeypatch.setattr(image_fetch, "ATTRIBUTION_REQUIRED", orig | {"library"})
+        p = image_fetch.fetch(job, 1)
+        assert p["credit"] == "" and p["caption_credit"] == want_cap
+        monkeypatch.setattr(image_fetch, "ATTRIBUTION_REQUIRED", orig)
+
+
 def test_quick_mode_picks_recommended_passing_hook(job, monkeypatch):
     import make
     from common import paths

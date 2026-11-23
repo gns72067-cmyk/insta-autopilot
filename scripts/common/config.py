@@ -22,7 +22,8 @@ DEFAULT_CONFIG = {
     "api_keys": {"unsplash": "", "pexels": ""},
     "web": {"port": 8765, "where": "local"},
     "photo_fit": "fill",                  # 카드 사진 배치: fill(꽉 채우기) | inset(흐린 배경 + 사진 박스) | auto
-    "press_photos": {"enabled": False},   # 언론사 기사 사진 사용 (켜면 이용자 확인 문구 기록, 책임은 이용자)   # 검토 화면: local(이 PC) | tailscale(밖에서 휴대폰) | lan(같은 Wi-Fi)
+    "press_photos": {"enabled": False},   # 언론사 기사 사진 사용 (켜면 이용자 확인 문구 기록, 책임은 이용자)
+    "photo_credit": "off",                # 사진 출처 표기: off(카드엔 안 씀, 캡션엔 라이선스상 필요한 것만) | on(카드·캡션 모두)
 }
 
 SECRET_KEYS = {"api_keys"}

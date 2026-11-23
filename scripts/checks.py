@@ -367,8 +367,10 @@ def check_caption(text: str, fs: dict, meta: dict, ck: dict, banned: list[str], 
         if parts["photo_lines"]:
             soft.append("사진 없는(C) 게시물인데 사진 출처 줄이 있습니다")
     else:
-        want = photo.get("caption_credit") or photo.get("credit")
-        if not parts["photo_lines"]:
+        want = photo.get("caption_credit") if "caption_credit" in photo else photo.get("credit")
+        if not want:
+            pass  # 출처 표기 끔(라이선스상 필요 없는 사진) — 사진 출처 줄을 요구하지 않음
+        elif not parts["photo_lines"]:
             soft.append(f"사진 출처 줄이 없습니다 → {want}")
         elif want and ws(parts["photo_lines"][0]) != ws(want):
             soft.append(f"사진 출처 줄이 credits.txt 와 다릅니다 → {want}")

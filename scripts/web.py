@@ -442,14 +442,19 @@ def fix_caption_credit(job: Path, old: str | None, t: dict | None = None) -> boo
     import caption as capmod
 
     m = paths.read_json(job / "meta.json") or {}
-    new = (m.get("photo") or {}).get("caption_credit") or (m.get("photo") or {}).get("credit")
-    if not old or not new or old == new:
+    ph = m.get("photo") or {}
+    new = ph.get("caption_credit") if "caption_credit" in ph else ph.get("credit")
+    if not old or old == new:
         return False
     changed = False
     for name in ("caption_original.txt", "caption.txt"):
         f = job / name
         if f.is_file() and old in (txt := f.read_text(encoding="utf-8")):
-            paths.write_text_atomic(f, txt.replace(old, new))
+            if new:
+                txt = txt.replace(old, new)
+            else:  # 새 사진은 출처 줄이 필요 없음 — 이전 출처 줄을 지운다
+                txt = "\n".join(l for l in txt.split("\n") if l.strip() != old.strip())
+            paths.write_text_atomic(f, txt)
             changed = True
     if changed:
         cap = m.get("caption") or {}
@@ -458,7 +463,7 @@ def fix_caption_credit(job: Path, old: str | None, t: dict | None = None) -> boo
             m["caption"] = cap
             paths.write_json(job / "meta.json", m)
         if t is not None:
-            t["log"].append(f"✔ 캡션 사진 출처 줄도 바꿈: {new}")
+            t["log"].append(f"✔ 캡션 사진 출처 줄도 바꿈: {new}" if new else "✔ 캡션의 이전 사진 출처 줄을 지움(새 사진은 표기 불필요)")
     elif t is not None and (job / "caption.txt").is_file():
         t["log"].append("⚠ 캡션에서 이전 사진 출처 줄을 찾지 못했습니다 — 캡션의 출처 줄을 직접 확인해 주세요")
     return changed
@@ -476,7 +481,8 @@ def act_photo(pid: str, body: dict) -> dict:
     cur = (paths.read_json(job / "meta.json") or {}).get("template")
     variant = "C" if pick is None else (cur if cur in ("A", "B") else "A")
     m0 = paths.read_json(job / "meta.json") or {}
-    old_credit = (m0.get("photo") or {}).get("caption_credit") or (m0.get("photo") or {}).get("credit")
+    ph0 = m0.get("photo") or {}
+    old_credit = ph0.get("caption_credit") if "caption_credit" in ph0 else ph0.get("credit")
 
     def after(t):
         _mark_manual(job, "photo")
