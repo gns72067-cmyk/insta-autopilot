@@ -214,20 +214,26 @@ def apply_inset(img: np.ndarray, info: dict, box_w: int, box_h: int) -> np.ndarr
 def apply_crop(img: np.ndarray, info: dict) -> np.ndarray:
     scale = info["scale"]
     h, w = img.shape[:2]
-    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_CUBIC
+    interp = cv2.INTER_AREA if scale < 1 else cv2.INTER_LANCZOS4
     big = cv2.resize(img, (max(1, round(w * scale)), max(1, round(h * scale))), interpolation=interp)
     x, y, bw, bh = (int(round(v)) for v in info["crop"])
     x = min(x, big.shape[1] - bw)
     y = min(y, big.shape[0] - bh)
-    return big[y:y + bh, x:x + bw]
+    out = big[y:y + bh, x:x + bw]
+    if scale > 1.3:                       # 작은 사진을 키우면 흐려진다 → 가벼운 선명도 보정(언샤프 마스크)
+        amt = min(0.8, 0.25 * (scale - 1))
+        soft = cv2.GaussianBlur(out, (0, 0), sigmaX=1.0 + 0.3 * min(scale, 5))
+        out = cv2.addWeighted(out, 1 + amt, soft, -amt, 0)
+    return out
 
 
 def smart_crop(src: Path, out: Path, box_w: int, box_h: int, box_top: int = 0, canvas_h: int | None = None,
-               band=DEFAULT_BAND, max_upscale: float | None = None) -> dict:
+               band=DEFAULT_BAND, max_upscale: float | None = None, fit: str = "fill") -> dict:
+    """fit: fill = 꽉 채우기(기본) · inset = 흐린 배경 + 사진 박스 · auto = max_upscale 넘게 확대되면 사진 박스"""
     img = read_image(src)
     subject, faces = subject_of(img)
     info = plan_crop(img.shape[1], img.shape[0], box_w, box_h, subject, box_top, canvas_h, band)
-    if max_upscale and info["scale"] * info.get("zoom", 1.0) > max_upscale:
+    if fit == "inset" or (fit == "auto" and max_upscale and info["scale"] * info.get("zoom", 1.0) > max_upscale):
         info = plan_inset(img.shape[1], img.shape[0], box_w, box_h, box_top, canvas_h, band)
         write_image(out, apply_inset(img, info, box_w, box_h))
     else:

@@ -7,9 +7,9 @@
       ③ Wikimedia Commons (CC0 · CC BY · CC BY-SA)
       ④ Flickr CC (Openverse 검색 — CC0 · CC BY · CC BY-SA, 정부·기관 계정 제외) — 키 불필요
       ⑤ Unsplash / Pexels (config.yaml 에 API 키가 있을 때만)
-      ⑥ 등록 언론사 기사 사진 — 이용자가 사용 허락을 받았다고 등록한 언론사(config press_photos)의 기사 대표 사진만,
-         규칙(checks image.allow_registered_press)이 허용할 때만. 사용 책임은 등록한 이용자에게 있다.
-- 원본이 작아 9:16 로 채우면 흐려지는 사진은 "흐린 배경 + 사진 박스"로 배치한다(자르지 않음). 그래도 너무 작으면 뺀다.
+      ⑥ 언론사 기사 사진 — 이용자가 '언론사 사진 사용'을 켰을 때(config press_photos.enabled, 사용 책임은 이용자),
+         팩트 시트 출처 기사의 대표 사진. 규칙(checks image.allow_press)이 허용할 때만.
+- 사진은 기본 꽉 채우기(fill). 원본이 작아 많이 키워야 하면 선명도 보정, 너무 작으면 뺀다(image.fill_max_upscale).
 - 순서: **검색어 관련도** 우선(앞 검색어일수록 구체적이라 가중), 출처 우선순위는 동점일 때만. 한 검색어가 후보를 독차지하지 않게 나눈다.
 - 9:16 로 자를 때 확대가 너무 큰(흐려지는) 사진은 뺀다(checks image.max_upscale, 기본 1.6).
 - 네트워크 요청은 ALLOWED_HOSTS 의 호스트로만 나간다(리디렉션 포함). 그 외 도메인은 코드에서 차단.
@@ -57,20 +57,14 @@ _last_req: dict[str, float] = {}
 PRESS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 
 
-def press_outlets(cfg: dict | None = None) -> list[dict]:
-    """이용자가 등록한 언론사(사용 허락 확인됨). config.yaml press_photos.outlets"""
+def press_enabled(cfg: dict | None = None) -> bool:
+    """이용자가 '언론사 사진 사용'을 켰는지 (config.yaml press_photos.enabled + 확인 문구)."""
     cfg = cfg if cfg is not None else cfgmod.load_config()
-    return [o for o in ((cfg.get("press_photos") or {}).get("outlets") or []) if o.get("domains") and o.get("confirmed")]
+    pp = cfg.get("press_photos") or {}
+    return bool(pp.get("enabled") and pp.get("confirm_text"))
 
 
-def press_outlet_for(host: str, outlets: list[dict]) -> dict | None:
-    host = (host or "").lower()
-    for o in outlets:
-        for d in o["domains"]:
-            d = d.lower().lstrip(".")
-            if host == d or host.endswith("." + d):
-                return o
-    return None
+NOT_PRESS_RE = re.compile(r"(?i)\.(go|or|ac|mil)\.kr$|\.gov(\.\w+)?$|wikipedia\.org$|youtube\.com$|instagram\.com$|facebook\.com$")
 
 
 def _throttle(host: str) -> None:
@@ -88,8 +82,8 @@ class BlockedHost(Exception):
     pass
 
 
-def guarded_get(url: str, *, headers=None, params=None, timeout=30, max_bytes=MAX_BYTES):
-    """화이트리스트 호스트만 허용. 리디렉션도 직접 따라가며 호스트를 확인한다."""
+def guarded_get(url: str, *, headers=None, params=None, timeout=30, max_bytes=MAX_BYTES, extra_hosts=None):
+    """화이트리스트 호스트만 허용(+ extra_hosts: 이번 요청에만 허용하는 언론사 기사·사진 호스트). 리디렉션도 직접 확인."""
     import time
 
     import requests
@@ -97,9 +91,10 @@ def guarded_get(url: str, *, headers=None, params=None, timeout=30, max_bytes=MA
     retries = 2
     for _ in range(8):
         u = urlsplit(url)
-        if u.scheme not in ("https", "http") or (u.scheme == "http" and not press_outlet_for(u.hostname, press_outlets())) \
-                or not (u.hostname in ALLOWED_HOSTS or (u.hostname or "").endswith(ALLOWED_SUFFIXES)
-                        or press_outlet_for(u.hostname, press_outlets())):
+        extra = {h.lower() for h in (extra_hosts or ())}
+        host = (u.hostname or "").lower()
+        if u.scheme not in ("https", "http") or (u.scheme == "http" and host not in extra) \
+                or not (host in ALLOWED_HOSTS or host.endswith(ALLOWED_SUFFIXES) or host in extra):
             raise BlockedHost(f"허용되지 않은 출처: {u.hostname}")
         _throttle(u.hostname)
         r = requests.get(url, headers=headers, params=params, timeout=timeout, allow_redirects=False, stream=True)
@@ -301,38 +296,36 @@ def article_images(html_text: str, base: str) -> list[str]:
 
 
 def search_press(cfg: dict, job: Path, allowed: bool, max_articles: int = 6) -> tuple[list[dict], list[str]]:
-    """팩트 시트 출처 기사 중 '등록 언론사' 기사의 대표 사진. 등록·규칙 허용이 둘 다 있어야 한다."""
-    outlets = press_outlets(cfg)
-    if not outlets:
+    """팩트 시트 출처 기사(언론사)의 대표 사진. 이용자가 켜고(press_enabled) 규칙이 허용할 때만. 책임은 이용자."""
+    if not press_enabled(cfg):
         return [], []
     if not allowed:
-        return [], ["언론사 사진: 등록은 돼 있지만 현재 규칙 버전이 허용하지 않아 건너뜀"]
+        return [], ["언론사 사진: 켜져 있지만 현재 규칙 버전이 허용하지 않아 건너뜀"]
     fs = paths.read_json(job / "factsheet.json", {}) or {}
     arts, seen = [], set()
     for cl in fs.get("claims") or []:
         for s in cl.get("sources") or []:
             u = s.get("url") or ""
-            o = press_outlet_for(urlsplit(u).hostname, outlets)
-            if o and u not in seen:
+            host = (urlsplit(u).hostname or "").lower()
+            if host and u not in seen and not NOT_PRESS_RE.search(host):
                 seen.add(u)
-                arts.append((u, s, cl, o))
+                arts.append((u, s, cl, host))
     out, notes = [], []
-    for u, s, cl, o in arts[:max_articles]:
+    for u, s, cl, host in arts[:max_articles]:
+        outlet = (s.get("outlet") or "").strip() or host.removeprefix("www.").removeprefix("m.")
         try:
-            r = guarded_get(u, headers={"User-Agent": PRESS_UA}, max_bytes=5 * 1024 * 1024)
+            r = guarded_get(u, headers={"User-Agent": PRESS_UA}, max_bytes=5 * 1024 * 1024, extra_hosts={host})
             imgs = article_images(r.content.decode(r.encoding or "utf-8", "replace"), u)
         except Exception as e:
-            notes.append(f"언론사 기사 열기 실패({o['name']}): {type(e).__name__}")
+            notes.append(f"언론사 기사 열기 실패({outlet}): {type(e).__name__}")
             continue
         for img in imgs:
-            if not press_outlet_for(urlsplit(img).hostname, [o]):
-                notes.append(f"언론사 사진 주소가 등록 도메인 밖이라 건너뜀: {urlsplit(img).hostname}")
-                continue
             out.append({"source": "press", "query": "기사 사진", "fixed_relevance": 1.2,
-                        "title": s.get("title") or o["name"], "text": cl.get("claim") or "",
+                        "title": s.get("title") or outlet, "text": cl.get("claim") or "",
                         "page_url": u, "file_url": img, "thumb_url": img, "referer": u,
-                        "license": "언론사 사용 허락 (이용자 등록" + (f": {o['basis']}" if o.get("basis") else "") + ")",
-                        "author": o["name"], "credit": f"사진: {o['name']}", "share_alike": False})
+                        "press_hosts": sorted({host, (urlsplit(img).hostname or "").lower()}),
+                        "license": "언론사 사진 (이용자가 사용 권한 확인·책임)",
+                        "author": outlet, "credit": f"사진: {outlet}", "share_alike": False})
     return out, notes
 
 
@@ -396,7 +389,7 @@ def load_preview(cand: dict, cfg: dict) -> np.ndarray | None:
         cand["width"], cand["height"] = w, h
         return img
     headers = {"User-Agent": PRESS_UA, "Referer": cand["referer"]} if cand.get("referer") else {"User-Agent": ua(cfg)}
-    r = guarded_get(cand["thumb_url"], headers=headers)
+    r = guarded_get(cand["thumb_url"], headers=headers, extra_hosts=cand.get("press_hosts"))
     import cv2
 
     img = cv2.imdecode(np.frombuffer(r.content, np.uint8), cv2.IMREAD_COLOR)
@@ -530,7 +523,10 @@ def run(job: Path, queries: list[str], max_n: int | None = None) -> dict:
     inset_max = float(get(c["checks"], "image.inset_max_upscale", 2.0))
     notes: list[str] = []
     found = search_library(meta["handle"], queries)
-    pr, pn = search_press(cfg, job, bool(get(c["checks"], "image.allow_registered_press", False)))
+    pr, pn = search_press(cfg, job, bool(get(c["checks"], "image.allow_press",
+                                             get(c["checks"], "image.allow_registered_press", False))))
+    fit = cfg.get("photo_fit") or "fill"
+    fill_max = float(get(c["checks"], "image.fill_max_upscale", 6.5))
     found += pr
     notes += pn
     for x in found:
@@ -563,10 +559,15 @@ def run(job: Path, queries: list[str], max_n: int | None = None) -> dict:
             continue
         up = upscale_of(cand.get("width") or img.shape[1], cand.get("height") or img.shape[0])
         iw = cand.get("width") or img.shape[1]
-        if up > max_up and (1080 - 2 * smart_crop.INSET_MARGIN) / iw > inset_max:
-            excluded.append({"title": cand["title"], "reason": f"해상도 부족: 가로 {iw}px — 사진 박스로도 {inset_max}배 넘게 확대됨"})
+        if fit == "inset" or (fit == "auto" and up > max_up):
+            if (1080 - 2 * smart_crop.INSET_MARGIN) / iw > inset_max:
+                excluded.append({"title": cand["title"], "reason": f"해상도 부족: 가로 {iw}px — 사진 박스로도 {inset_max}배 넘게 확대됨"})
+                continue
+        elif up > fill_max:
+            excluded.append({"title": cand["title"], "reason": f"해상도 부족: 꽉 채우면 {up:.1f}배 확대(기준 {fill_max}배)"})
             continue
-        an = analyse(cand, img, band, pdir, len(picked) + 1, inset=up > max_up)
+        an = analyse(cand, img, band, pdir, len(picked) + 1,
+                     inset=fit == "inset" or (fit == "auto" and up > max_up))
         if an["faces"] and an["in_band"] is False:
             excluded.append({"title": cand["title"], "reason": "9:16 크롭에서 얼굴이 세이프존 대역 밖"})
             for k in ("preview_916", "preview_45"):
@@ -576,7 +577,9 @@ def run(job: Path, queries: list[str], max_n: int | None = None) -> dict:
         short = min(cand.get("width") or 0, cand.get("height") or 0)
         cand["warnings"] = [f"해상도 낮음: 짧은 변 {short}px < {min_side}px"] if short and short < min_side else []
         if an.get("layout") == "inset":
-            cand["warnings"].append("작은 사진 → 흐린 배경 + 사진 박스로 배치(자르지 않음)")
+            cand["warnings"].append("흐린 배경 + 사진 박스로 배치(자르지 않음)")
+        elif up > max_up:
+            cand["warnings"].append(f"꽉 채우면 {up:.1f}배 확대 — 다소 흐릴 수 있음(검토 화면에서 '사진 박스'로 바꿀 수 있음)")
         cand["no"] = len(picked) + 1
         picked.append(cand)
     contact_sheet(picked, job / "photo_candidates.png")

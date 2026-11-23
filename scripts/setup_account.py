@@ -9,9 +9,10 @@
     python setup_account.py save <draft.yaml>
     python setup_account.py show [handle]
     python setup_account.py set-key unsplash|pexels [--clear]   # 사진 검색 API 키 (이용자 터미널에서 직접 입력)
-    python setup_account.py press list
-    python setup_account.py press add --name 연합뉴스 --domain yna.co.kr [--domain ...] --basis "사용 근거" --confirm "<이용자 확인 문구>"
-    python setup_account.py press remove --name 연합뉴스
+    python setup_account.py press status
+    python setup_account.py press on --confirm "<이용자 확인 문구>"     # 언론사 기사 사진 사용 (책임은 이용자)
+    python setup_account.py press off
+    python setup_account.py photo-fit fill|inset                         # 사진 기본 배치: 꽉 채우기 / 사진 박스
 """
 from __future__ import annotations
 
@@ -291,56 +292,40 @@ def cmd_set_key(a) -> int:
     return 0
 
 
-PRESS_CONFIRM_WORDS = ("확인", "책임")
-DOMAIN_RE = re.compile(r"^(?=.{4,100}$)([a-z0-9-]+\.)+[a-z]{2,}$")
-
-
 def cmd_press(a) -> int:
-    """기사 사진 사용 허락을 받은 언론사 등록 — 등록·사용 책임은 이용자. 근거와 확인 문구를 기록으로 남긴다."""
+    """언론사 기사 사진 사용 켬/끔 — 켤 때 이용자 본인의 확인 문구(사용 권한·책임)를 기록한다."""
     import datetime as _dt
 
     cfg = cfgmod.load_config()
     pp = dict(cfg.get("press_photos") or {})
-    outlets = list(pp.get("outlets") or [])
-    if a.press_cmd == "list":
-        if not outlets:
-            print("· 등록된 언론사 없음 — 기사 사진은 쓰지 않습니다")
-        for o in outlets:
-            print(f"- {o['name']} ({', '.join(o['domains'])}) · 근거: {o.get('basis') or '-'} · 등록 {o.get('registered_at', '')[:10]}")
+    now = _dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    if a.press_cmd == "status":
+        print(f"✔ 언론사 사진: {'사용' if pp.get('enabled') else '사용 안 함'}"
+              + (f" (켠 시각 {pp.get('enabled_at', '')[:16]}, 확인: \"{pp.get('confirm_text')}\")" if pp.get("enabled") else ""))
         return 0
-    if a.press_cmd == "remove":
-        n = len(outlets)
-        outlets = [o for o in outlets if o["name"] != a.name]
-        if len(outlets) == n:
-            print(f"✘ 등록되지 않은 언론사: {a.name}")
+    if a.press_cmd == "on":
+        if not a.confirm or "책임" not in a.confirm:
+            print("✘ 이용자 본인의 확인 문구가 필요합니다('책임'이 들어간, 이용자가 채팅에 직접 쓴 문장).\n"
+                  "   예: \"언론사 사진 사용 권한을 확인했고 사용 책임은 나에게 있음\"")
             return 2
-        print(f"✔ {a.name} 등록 해제 — 이 언론사 기사 사진은 더 이상 후보에 넣지 않음")
+        pp = {"enabled": True, "confirm_text": a.confirm.strip(), "enabled_at": now}
+        print("✔ 언론사 사진 사용 — 팩트 시트 출처 기사의 대표 사진을 후보 맨 앞에 넣습니다 (출처: 사진: <언론사>)")
     else:
-        doms = sorted({d.strip().lower().removeprefix("www.") for d in a.domain})
-        bad = [d for d in doms if not DOMAIN_RE.match(d)]
-        if bad:
-            print(f"✘ 도메인 형식이 아닙니다: {', '.join(bad)} (예: yna.co.kr)")
-            return 2
-        if not a.basis or not a.basis.strip():
-            print("✘ 사용 근거(--basis)를 적어 주세요. 예: \"연합뉴스 사진 구독 계약 2026-11\", \"편집국 서면 허락\"")
-            return 2
-        if not a.confirm or not all(w in a.confirm for w in PRESS_CONFIRM_WORDS):
-            print("✘ 이용자 본인의 확인 문구가 필요합니다(이용자가 채팅에 직접 쓴 문장, '확인'과 '책임'이 들어가야 함).\n"
-                  "   예: \"연합뉴스 사진 사용 허락을 확인했고 사용 책임은 나에게 있음\"")
-            return 2
-        outlets = [o for o in outlets if o["name"] != a.name]
-        outlets.append({"name": a.name.strip(), "domains": doms, "basis": a.basis.strip(), "confirmed": True,
-                        "confirm_text": a.confirm.strip(),
-                        "registered_at": _dt.datetime.now().astimezone().isoformat(timespec="seconds")})
-        print(f"✔ {a.name} 등록 ({', '.join(doms)}) — 이 언론사 기사의 대표 사진을 후보에 넣습니다. 출처 표기: 사진: {a.name}")
-    pp["outlets"] = outlets
+        pp = {"enabled": False, "disabled_at": now}
+        print("✔ 언론사 사진 사용 안 함")
     cfg["press_photos"] = pp
     cfgmod.save_config(cfg)
-    log_f = paths.home() / "press_photos_log.jsonl"
-    with open(log_f, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"at": _dt.datetime.now().astimezone().isoformat(timespec="seconds"), "action": a.press_cmd,
-                            "name": a.name, "domains": getattr(a, "domain", None), "basis": getattr(a, "basis", None),
-                            "confirm_text": getattr(a, "confirm", None)}, ensure_ascii=False) + "\n")
+    with open(paths.home() / "press_photos_log.jsonl", "a", encoding="utf-8") as f:
+        f.write(json.dumps({"at": now, "action": a.press_cmd, "confirm_text": getattr(a, "confirm", None)},
+                           ensure_ascii=False) + "\n")
+    return 0
+
+
+def cmd_photo_fit(a) -> int:
+    cfg = cfgmod.load_config()
+    cfg["photo_fit"] = a.fit
+    cfgmod.save_config(cfg)
+    print(f"✔ 사진 기본 배치: {'fill': '꽉 채우기', 'inset': '흐린 배경 + 사진 박스', 'auto': '작으면 사진 박스'}[a.fit]")
     return 0
 
 
@@ -381,14 +366,12 @@ def main() -> int:
     p.add_argument("handle", nargs="?")
     p = sub.add_parser("press")
     ps = p.add_subparsers(dest="press_cmd", required=True)
-    ps.add_parser("list")
-    q = ps.add_parser("add")
-    q.add_argument("--name", required=True)
-    q.add_argument("--domain", action="append", required=True)
-    q.add_argument("--basis", required=True)
+    ps.add_parser("status")
+    q = ps.add_parser("on")
     q.add_argument("--confirm", required=True)
-    q = ps.add_parser("remove")
-    q.add_argument("--name", required=True)
+    ps.add_parser("off")
+    p = sub.add_parser("photo-fit")
+    p.add_argument("fit", choices=["fill", "inset", "auto"])
     p = sub.add_parser("set-key")
     p.add_argument("service", choices=["unsplash", "pexels"])
     p.add_argument("--clear", action="store_true")
@@ -396,7 +379,7 @@ def main() -> int:
     try:
         return {"init": cmd_init, "catalog": cmd_catalog, "preset": cmd_preset, "import-asset": cmd_import_asset,
                 "validate": cmd_validate, "sample": cmd_sample, "save": cmd_save, "show": cmd_show,
-                "set-key": cmd_set_key, "press": cmd_press}[a.cmd](a)
+                "set-key": cmd_set_key, "press": cmd_press, "photo-fit": cmd_photo_fit}[a.cmd](a)
     except (RulesError, FileNotFoundError, ValueError) as e:
         print(f"✘ {e}")
         return 2

@@ -72,7 +72,7 @@ def fetch(job: Path, pick: int, credit_override: str | None = None) -> dict:
             if cand.get("download_location") and key:
                 guarded_get(cand["download_location"], headers={"Authorization": f"Client-ID {key}"})
             url = f"{cand['file_url']}&w=2400&q=90&fm=jpg" if "?" in cand["file_url"] else f"{cand['file_url']}?w=2400&q=90&fm=jpg"
-        r = guarded_get(url, headers=headers)
+        r = guarded_get(url, headers=headers, extra_hosts=cand.get("press_hosts"))
         dest = job / f"photo_original{_ext(r.headers.get('Content-Type', ''), url)}"
         dest.write_bytes(r.content)
         file_url = url

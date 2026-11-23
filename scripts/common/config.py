@@ -20,7 +20,9 @@ DEFAULT_CONFIG = {
     "render_concurrency": 2,
     "contact": "",                  # Wikimedia API User-Agent 연락처 — 셋팅 마법사에서 받은 이용자 본인 이메일
     "api_keys": {"unsplash": "", "pexels": ""},
-    "web": {"port": 8765, "where": "local"},   # 검토 화면: local(이 PC) | tailscale(밖에서 휴대폰) | lan(같은 Wi-Fi)
+    "web": {"port": 8765, "where": "local"},
+    "photo_fit": "fill",                  # 카드 사진 배치: fill(꽉 채우기) | inset(흐린 배경 + 사진 박스) | auto
+    "press_photos": {"enabled": False},   # 언론사 기사 사진 사용 (켜면 이용자 확인 문구 기록, 책임은 이용자)   # 검토 화면: local(이 PC) | tailscale(밖에서 휴대폰) | lan(같은 Wi-Fi)
 }
 
 SECRET_KEYS = {"api_keys"}

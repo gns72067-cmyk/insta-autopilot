@@ -160,27 +160,32 @@ def test_gov_flickr_creators_excluded():
     assert not im.GOV_CREATOR_RE.search("Jane Doe")
 
 
-def test_press_outlet_matching_and_article_image():
+def test_article_image_and_non_press_hosts():
     import image_search as im
 
-    outs = [{"name": "연합뉴스", "domains": ["yna.co.kr"], "confirmed": True}]
-    assert im.press_outlet_for("img0.yna.co.kr", outs)["name"] == "연합뉴스"
-    assert im.press_outlet_for("www.yna.co.kr", outs) and not im.press_outlet_for("evilyna.co.kr", outs)
     html = '<meta property="og:image" content="https://img.yna.co.kr/photo/a.jpg"/><meta name="twitter:image" content="/b.jpg">'
     assert im.article_images(html, "https://www.yna.co.kr/view/1") == ["https://img.yna.co.kr/photo/a.jpg", "https://www.yna.co.kr/b.jpg"]
+    assert im.NOT_PRESS_RE.search("www.mafra.go.kr") and not im.NOT_PRESS_RE.search("www.hankyung.com")
 
 
-def test_press_needs_registration_and_rules(tmp_path, monkeypatch):
+def test_press_off_by_default_and_rules_gate(tmp_path):
     import image_search as im
 
     job = tmp_path / "j"
     job.mkdir()
-    (job / "factsheet.json").write_text('{"claims":[{"claim":"c","sources":[{"url":"https://www.yna.co.kr/view/1","title":"t"}]}]}',
+    (job / "factsheet.json").write_text('{"claims":[{"claim":"c","sources":[{"url":"https://www.yna.co.kr/view/1","outlet":"연합뉴스"}]}]}',
                                         encoding="utf-8")
-    assert im.search_press({}, job, True) == ([], [])                      # 등록 없음 → 아무것도 안 함
-    cfg = {"press_photos": {"outlets": [{"name": "연합뉴스", "domains": ["yna.co.kr"], "confirmed": True}]}}
+    assert im.search_press({}, job, True) == ([], [])                      # 꺼져 있으면 아무것도 안 함
+    cfg = {"press_photos": {"enabled": True, "confirm_text": "확인했고 책임은 나에게"}}
     r, notes = im.search_press(cfg, job, False)
     assert r == [] and "허용하지 않아" in notes[0]                          # 규칙이 막으면 건너뜀
+
+
+def test_guarded_get_extra_hosts_only_for_that_call():
+    import image_search as im
+
+    with pytest.raises(im.BlockedHost):
+        im.guarded_get("https://www.yna.co.kr/view/1")
 
 
 def test_inset_layout_keeps_whole_photo():
@@ -196,15 +201,26 @@ def test_inset_layout_keeps_whole_photo():
     assert 0.15 * 1920 - 1 <= y + h / 2 <= 0.55 * 1920 + 1                 # 피사체 대역 가운데
 
 
-def test_press_registration_requires_user_confirmation(home, capsys):
+def test_press_toggle_requires_user_confirmation(home):
     import argparse
 
     import setup_account as sa
     from common import config
 
-    a = argparse.Namespace(press_cmd="add", name="연합뉴스", domain=["yna.co.kr"], basis="구독 계약", confirm="네")
-    assert sa.cmd_press(a) == 2
-    a.confirm = "연합뉴스 사진 사용 허락 확인했고 책임은 나에게 있음"
-    assert sa.cmd_press(a) == 0
-    o = config.load_config()["press_photos"]["outlets"][0]
-    assert o["domains"] == ["yna.co.kr"] and o["confirmed"] and "책임" in o["confirm_text"]
+    assert sa.cmd_press(argparse.Namespace(press_cmd="on", confirm="네")) == 2
+    assert sa.cmd_press(argparse.Namespace(press_cmd="on", confirm="언론사 사진 사용 권한 확인했고 책임은 나에게 있음")) == 0
+    pp = config.load_config()["press_photos"]
+    assert pp["enabled"] and "책임" in pp["confirm_text"]
+    assert sa.cmd_press(argparse.Namespace(press_cmd="off")) == 0
+    assert not config.load_config()["press_photos"]["enabled"]
+
+
+def test_fill_crop_sharpens_small_photos():
+    import numpy as np
+
+    import smart_crop as sc
+
+    img = (np.random.default_rng(0).random((413, 620, 3)) * 255).astype(np.uint8)
+    info = sc.plan_crop(620, 413, 1080, 1920, None, 0, 1920)
+    out = sc.apply_crop(img, info)
+    assert out.shape == (1920, 1080, 3) and info["scale"] > 4

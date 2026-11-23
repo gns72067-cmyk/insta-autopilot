@@ -273,6 +273,7 @@ def post_detail(pid: str) -> dict:
                                                   "cta_last.png", "credits.txt", "factsheet.md")}
     return {"id": pid, "status": code, "status_label": label, "method": method, "reel_stale": reel_stale(job),
             "account": {"handle": m["handle"], "alias": profile.get("alias"), "display_name": profile.get("display_name")},
+            "photo_fit": m.get("photo_fit") or cfgmod.load_config().get("photo_fit") or "fill",
             "meta": {k: m.get(k) for k in ("title", "created_at", "updated_at", "rules", "stages", "selected_hook", "hook",
                                            "hook_edited", "template", "photo", "auto", "card", "reel", "caption", "upload")},
             "hooks": hooks, "hook_checks": {v: {"ok": r.get("ok"), "errors": [e["msg"] for e in r.get("errors", [])],
@@ -497,6 +498,20 @@ def act_photo_search(pid: str, body: dict) -> dict:
     return {"ok": True, "task": t["id"]}
 
 
+def act_fit(pid: str, body: dict) -> dict:
+    job = job_from_id(pid)
+    fit = body.get("fit")
+    if fit not in ("fill", "inset"):
+        raise ValueError("배치는 fill(꽉 채우기) 또는 inset(사진 박스)")
+    m = paths.read_json(job / "meta.json") or {}
+    if not (m.get("photo") or {}).get("path"):
+        raise ValueError("사진이 없습니다")
+    m["photo_fit"] = fit
+    paths.write_json(job / "meta.json", m)
+    t = TASKS.start(pid, "사진 배치 바꾸고 다시 렌더", render_steps(job))
+    return {"ok": True, "task": t["id"]}
+
+
 def act_template(pid: str, body: dict) -> dict:
     job = job_from_id(pid)
     v = body.get("variant")
@@ -606,7 +621,7 @@ def act_record(pid: str, body: dict) -> dict:
     return {"ok": True}
 
 
-ACTIONS = {"record": act_record, "reel": act_reel, "photo_search": act_photo_search, "hook": act_hook, "photo": act_photo, "template": act_template, "caption": act_caption,
+ACTIONS = {"fit": act_fit, "record": act_record, "reel": act_reel, "photo_search": act_photo_search, "hook": act_hook, "photo": act_photo, "template": act_template, "caption": act_caption,
            "approve": act_approve, "preflight": act_preflight, "upload": act_upload}
 
 

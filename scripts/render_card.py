@@ -328,7 +328,7 @@ GUIDE_JS = r"""
 
 
 async def _render_one(browser, c, tm, kind, variant, slots, brand, bfont, photo_src, out_dir: Path,
-                      checks, attempts: int, adjust_enabled: bool) -> dict:
+                      checks, attempts: int, adjust_enabled: bool, photo_fit: str = "fill") -> dict:
     tname = "reel_9x16" if kind == "reel" else "feed_4x5"
     t = tm["templates"][tname]
     page = await render.open_template(browser, Path(c["templates_dir"]), t["file"], t["size"], bfont)
@@ -342,7 +342,7 @@ async def _render_one(browser, c, tm, kind, variant, slots, brand, bfont, photo_
             band = get(checks, "image.subject_band", list(smart_crop.DEFAULT_BAND))
             crop_out = out_dir / f"photo_{kind}.jpg"
             crop_info = smart_crop.smart_crop(Path(photo_src), crop_out, bw, bh, int(round(pb[1])), t["size"][1], tuple(band),
-                                              float(get(checks, "image.max_upscale", 1.6)))
+                                              float(get(checks, "image.max_upscale", 1.6)), photo_fit)
             slots["photo"] = paths.file_url(crop_out) + f"?v={crop_out.stat().st_mtime_ns}"
     adj = Adjust()
     history = []
@@ -388,7 +388,7 @@ async def _render_one(browser, c, tm, kind, variant, slots, brand, bfont, photo_
 
 async def render_cards(c, profile, hook, variant, out_dir: Path, photo_src: str | None = None, credit: str = "",
                        feed: bool = False, attempts: int = 3, adjust_enabled: bool = True,
-                       date: dt.date | None = None) -> dict:
+                       date: dt.date | None = None, photo_fit: str = "fill") -> dict:
     from playwright.async_api import async_playwright
 
     tm, checks = c["template_meta"], c["checks"]
@@ -400,11 +400,17 @@ async def render_cards(c, profile, hook, variant, out_dir: Path, photo_src: str 
             kinds = ["reel"] + (["feed"] if feed else [])
             results = await asyncio.gather(*[
                 _render_one(browser, c, tm, k, variant, slots, brand, bfont, photo_src, out_dir, checks,
-                            attempts, adjust_enabled) for k in kinds])
+                            attempts, adjust_enabled, photo_fit) for k in kinds])
         finally:
             await browser.close()
     return {"rules_version": c["version"], "variant": variant, "brand": brand,
             "results": {r["kind"]: r for r in results}, "ok": all(r["ok"] for r in results)}
+
+
+def photo_fit_of(meta: dict) -> str:
+    """게시물에서 고른 값 → 설정(config photo_fit) → 기본 꽉 채우기."""
+    f = meta.get("photo_fit") or cfgmod.load_config().get("photo_fit") or "fill"
+    return f if f in ("fill", "inset", "auto") else "fill"
 
 
 def pick_variant(meta: dict, c: dict, cli: str | None) -> str:
@@ -441,7 +447,8 @@ def main() -> int:
             photo["path"] = str(local[0])
     date = dt.date.fromisoformat(a.job.parent.parent.name) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", a.job.parent.parent.name) else None
     rep = asyncio.run(render_cards(c, profile, meta["hook"], variant, a.job, photo.get("path") if variant != "C" else None,
-                                   photo.get("credit", ""), a.feed, a.attempts, True, date))
+                                   photo.get("credit", ""), a.feed, a.attempts, True, date,
+                                   photo_fit_of(meta)))
     meta["template"] = variant
     meta["card"] = {"variant": variant, "brand": rep["brand"], "ok": rep["ok"],
                     "results": {k: {kk: v[kk] for kk in ("ok", "issues", "adjustments", "files", "crop")}
