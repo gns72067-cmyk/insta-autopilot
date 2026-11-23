@@ -1,6 +1,6 @@
 {
   "name": "insta-autopilot",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "인스타 카드뉴스·10초 릴스 자동화 — 규칙은 서명된 규칙 URL에서 받고, 수집·검사·렌더는 이용자 PC에서 실행",
   "author": {
     "name": "insta-autopilot"

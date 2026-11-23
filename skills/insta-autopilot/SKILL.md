@@ -188,6 +188,15 @@ description: 인스타 카드뉴스·10초 릴스 제작과 업로드 — 주제
 `ia perf due` 목록마다: 방식 B 면 `ia perf fetch JOB --at 24h|72h`, 방식 A·C 면 브라우저로 **본인 게시물의 공개 지표**(좋아요·댓글·조회수)를 읽어 `ia perf record JOB --at 24h --json '{…}'`.
 주간: `ia perf report <계정>` → 조정안은 이용자 승인 후에만 profile 에 반영.
 
+# E. 플러그인 업데이트 ("업데이트해줘", "새 버전 받아줘")
+
+규칙(훅 기준·템플릿·사진 규칙)은 작업마다 `ia rules_sync` 로 **자동** 갱신된다 — 이 절은 플러그인 코드(스크립트·검토 화면·이 문서) 업데이트다.
+1. Bash 로 `claude plugin marketplace update insta-autopilot` → `claude plugin update insta-autopilot@insta-autopilot` 를 실행한다.
+   - `claude` 명령이 없거나 실패하면(데스크톱 앱만 쓰는 PC 등) 이용자에게 안내: 입력창에 `/plugin` → **Marketplaces** → insta-autopilot → **Update**.
+2. 끝나면 이용자에게: "입력창에 `/reload-plugins` 를 입력하거나 새 세션을 열어야 새 버전이 적용됩니다." (슬래시 명령은 Claude 가 대신 실행할 수 없다)
+3. 새 세션에서 `ia web start` 가 검토 화면을 새 버전으로 자동으로 다시 켠다.
+- 자동 업데이트를 켜 두면 다음부터는 1번이 필요 없다: `/plugin` → Marketplaces → insta-autopilot → **Enable auto-update** (기본은 꺼짐).
+
 ## 하지 말 것
 - 규칙(수치·금지 표현·형식·출처 기준·화면 절차)을 이 문서나 기억에서 가져오지 않는다 — 항상 rules_compose 출력.
 - 서명 검증이 안 된 규칙 사용, 언론사·통신사 사진 사용, 기사 문장 베끼기, 팩트 시트 밖 내용·지어낸 인용.

@@ -23,7 +23,9 @@
 /plugin install insta-autopilot@insta-autopilot
 ```
 
-업데이트: `/plugin marketplace update insta-autopilot` (새 기능이 생기면 이 한 줄)
+**업데이트** — 규칙은 작업할 때마다 자동으로 받습니다. 플러그인(기능) 업데이트는:
+- 한 번만 켜 두기(추천): `/plugin` → **Marketplaces** → insta-autopilot → **Enable auto-update** (기본은 꺼짐)
+- 또는 Claude 에게 "플러그인 업데이트해줘" → 끝나면 입력창에 `/reload-plugins` (또는 새 세션)
 
 실행 환경 설치 (한 번):
 
