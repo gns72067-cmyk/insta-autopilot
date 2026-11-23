@@ -341,7 +341,8 @@ async def _render_one(browser, c, tm, kind, variant, slots, brand, bfont, photo_
             bw, bh = int(round(pb[2] - pb[0])), int(round(pb[3] - pb[1]))
             band = get(checks, "image.subject_band", list(smart_crop.DEFAULT_BAND))
             crop_out = out_dir / f"photo_{kind}.jpg"
-            crop_info = smart_crop.smart_crop(Path(photo_src), crop_out, bw, bh, int(round(pb[1])), t["size"][1], tuple(band))
+            crop_info = smart_crop.smart_crop(Path(photo_src), crop_out, bw, bh, int(round(pb[1])), t["size"][1], tuple(band),
+                                              float(get(checks, "image.max_upscale", 1.6)))
             slots["photo"] = paths.file_url(crop_out) + f"?v={crop_out.stat().st_mtime_ns}"
     adj = Adjust()
     history = []

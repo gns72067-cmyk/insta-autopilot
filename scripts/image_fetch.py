@@ -52,7 +52,10 @@ def fetch(job: Path, pick: int, credit_override: str | None = None) -> dict:
         shutil.copyfile(src, dest)
         file_url = None
     else:
-        headers = {"User-Agent": ua(cfg)}
+        from image_search import PRESS_UA
+
+        headers = ({"User-Agent": PRESS_UA, "Referer": cand["referer"]} if cand.get("referer")
+                   else {"User-Agent": ua(cfg)})                      # 이메일 연락처는 Wikimedia 에만
         url = cand.get("file_url")
         if cand["source"] in ("wikimedia", "kogl1"):
             # 원본이 너무 크면 긴 변 MAX_LONG_SIDE 의 썸네일을 받는다

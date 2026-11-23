@@ -173,6 +173,44 @@ def _plan(img_w, img_h, box_w, box_h, subject, box_top, canvas_h, band, scale) -
     return info
 
 
+INSET_MARGIN = 40           # 사진 박스 좌우 여백(px)
+INSET_MAX_H = 0.62         # 사진 박스 최대 높이(상자 높이 대비)
+
+
+def plan_inset(img_w: int, img_h: int, box_w: int, box_h: int, box_top: int = 0, canvas_h: int | None = None,
+               band=DEFAULT_BAND) -> dict:
+    """원본이 작아 꽉 채우면 흐려질 때: 같은 사진을 흐리게 깐 배경 위에 원본 비율 그대로의 사진 박스를 피사체 대역 가운데에.
+    사진을 자르지 않으므로 워터마크·출처 표기도 그대로 남는다."""
+    canvas_h = canvas_h or box_h
+    fg_w = box_w - 2 * INSET_MARGIN
+    scale = fg_w / img_w
+    fg_h = img_h * scale
+    if fg_h > box_h * INSET_MAX_H:
+        scale = box_h * INSET_MAX_H / img_h
+        fg_w, fg_h = img_w * scale, box_h * INSET_MAX_H
+    band_top, band_bot = band[0] * canvas_h, band[1] * canvas_h
+    cy = (band_top + band_bot) / 2 - box_top
+    y = float(min(max(cy - fg_h / 2, 0.0), box_h - fg_h))
+    x = (box_w - fg_w) / 2
+    return {"mode": "inset", "scale": scale, "zoom": 1.0, "fg": [x, y, fg_w, fg_h], "crop": None,
+            "upscaled": scale > 1.0, "band_px": [band_top, band_bot],
+            "subject_canvas": [round(x), round(y + box_top), round(x + fg_w), round(y + fg_h + box_top)],
+            "subject_in_band": True}
+
+
+def apply_inset(img: np.ndarray, info: dict, box_w: int, box_h: int) -> np.ndarray:
+    h, w = img.shape[:2]
+    s = max(box_w / w, box_h / h)
+    big = cv2.resize(img, (max(box_w, int(np.ceil(w * s))), max(box_h, int(np.ceil(h * s)))), interpolation=cv2.INTER_LINEAR)
+    oy, ox = (big.shape[0] - box_h) // 2, (big.shape[1] - box_w) // 2
+    bg = cv2.GaussianBlur(big[oy:oy + box_h, ox:ox + box_w], (0, 0), sigmaX=28)
+    bg = (bg.astype(np.float32) * 0.55).astype(np.uint8)
+    x, y, fw, fh = (int(round(v)) for v in info["fg"])
+    fg = cv2.resize(img, (fw, fh), interpolation=cv2.INTER_CUBIC if info["scale"] > 1 else cv2.INTER_AREA)
+    bg[y:y + fh, x:x + fw] = fg
+    return bg
+
+
 def apply_crop(img: np.ndarray, info: dict) -> np.ndarray:
     scale = info["scale"]
     h, w = img.shape[:2]
@@ -185,11 +223,15 @@ def apply_crop(img: np.ndarray, info: dict) -> np.ndarray:
 
 
 def smart_crop(src: Path, out: Path, box_w: int, box_h: int, box_top: int = 0, canvas_h: int | None = None,
-               band=DEFAULT_BAND) -> dict:
+               band=DEFAULT_BAND, max_upscale: float | None = None) -> dict:
     img = read_image(src)
     subject, faces = subject_of(img)
     info = plan_crop(img.shape[1], img.shape[0], box_w, box_h, subject, box_top, canvas_h, band)
-    write_image(out, apply_crop(img, info))
+    if max_upscale and info["scale"] * info.get("zoom", 1.0) > max_upscale:
+        info = plan_inset(img.shape[1], img.shape[0], box_w, box_h, box_top, canvas_h, band)
+        write_image(out, apply_inset(img, info, box_w, box_h))
+    else:
+        write_image(out, apply_crop(img, info))
     info.update({"source": str(src), "out": str(out), "source_size": [img.shape[1], img.shape[0]],
                  "faces": len(faces), "subject_kind": subject["kind"] if subject else None})
     return info

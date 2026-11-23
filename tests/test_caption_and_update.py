@@ -122,7 +122,7 @@ def test_data_home_survives_plugin_update(tmp_path):
     """플러그인 폴더를 새 버전으로 바꿔도(재설치) 이용자 데이터 폴더와 내용은 그대로."""
     src = Path(__file__).resolve().parents[1]
     v1, v2 = tmp_path / "plugin-1.0.0", tmp_path / "plugin-1.1.0"
-    ignore = shutil.ignore_patterns("__pycache__", ".pytest_cache", "assets", "models", "tests")
+    ignore = shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache", "assets", "models", "tests")
     shutil.copytree(src, v1, ignore=ignore)
     env = {k: v for k, v in os.environ.items() if k != "INSTA_AUTOPILOT_HOME"}
     env.update(APPDATA=str(tmp_path / "appdata"), XDG_CONFIG_HOME=str(tmp_path / "xdg"), HOME=str(tmp_path / "userhome"),

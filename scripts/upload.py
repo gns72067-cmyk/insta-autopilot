@@ -30,7 +30,7 @@ from common.rules import compose, get  # noqa: E402
 
 L = log.get("upload")
 METHODS = {"browser": "A", "api": "B", "manual": "C"}
-PHOTO_SOURCES = {"library", "kogl1", "wikimedia", "flickr", "unsplash", "pexels"}
+PHOTO_SOURCES = {"library", "kogl1", "wikimedia", "flickr", "unsplash", "pexels", "press"}
 
 
 class UploadBlocked(Exception):

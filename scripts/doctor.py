@@ -106,7 +106,7 @@ def run_checks(offline: bool = False) -> list[dict]:
         required=False, fix="insta-setup 2단계에서 본인 이메일 입력")
     keys = cfg.get("api_keys") or {}
     srcs = ["라이브러리"] + (["Wikimedia(공공누리 포함)"] if valid_email(contact) else []) + ["Flickr CC"] \
-        + [n for n, k in (("Unsplash", "unsplash"), ("Pexels", "pexels")) if keys.get(k)]
+        + [n for n, k in (("Unsplash", "unsplash"), ("Pexels", "pexels")) if keys.get(k)]         + [f"등록 언론사 {len(po)}곳" for po in [[o for o in ((cfg.get("press_photos") or {}).get("outlets") or []) if o.get("confirmed")]] if po]
     add("사진 검색 출처", True, " · ".join(srcs), required=False,
         fix="" if keys.get("unsplash") or keys.get("pexels") else "무료 키 등록 시 더 다양: setup_account set-key unsplash")
     if not offline:

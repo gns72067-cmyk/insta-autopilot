@@ -7,6 +7,9 @@
       ③ Wikimedia Commons (CC0 · CC BY · CC BY-SA)
       ④ Flickr CC (Openverse 검색 — CC0 · CC BY · CC BY-SA, 정부·기관 계정 제외) — 키 불필요
       ⑤ Unsplash / Pexels (config.yaml 에 API 키가 있을 때만)
+      ⑥ 등록 언론사 기사 사진 — 이용자가 사용 허락을 받았다고 등록한 언론사(config press_photos)의 기사 대표 사진만,
+         규칙(checks image.allow_registered_press)이 허용할 때만. 사용 책임은 등록한 이용자에게 있다.
+- 원본이 작아 9:16 로 채우면 흐려지는 사진은 "흐린 배경 + 사진 박스"로 배치한다(자르지 않음). 그래도 너무 작으면 뺀다.
 - 순서: **검색어 관련도** 우선(앞 검색어일수록 구체적이라 가중), 출처 우선순위는 동점일 때만. 한 검색어가 후보를 독차지하지 않게 나눈다.
 - 9:16 로 자를 때 확대가 너무 큰(흐려지는) 사진은 뺀다(checks image.max_upscale, 기본 1.6).
 - 네트워크 요청은 ALLOWED_HOSTS 의 호스트로만 나간다(리디렉션 포함). 그 외 도메인은 코드에서 차단.
@@ -51,6 +54,25 @@ MIN_INTERVAL = {"wikimedia.org": 1.0, "unsplash.com": 0.3, "pexels.com": 0.3, "o
 _last_req: dict[str, float] = {}
 
 
+PRESS_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+
+
+def press_outlets(cfg: dict | None = None) -> list[dict]:
+    """이용자가 등록한 언론사(사용 허락 확인됨). config.yaml press_photos.outlets"""
+    cfg = cfg if cfg is not None else cfgmod.load_config()
+    return [o for o in ((cfg.get("press_photos") or {}).get("outlets") or []) if o.get("domains") and o.get("confirmed")]
+
+
+def press_outlet_for(host: str, outlets: list[dict]) -> dict | None:
+    host = (host or "").lower()
+    for o in outlets:
+        for d in o["domains"]:
+            d = d.lower().lstrip(".")
+            if host == d or host.endswith("." + d):
+                return o
+    return None
+
+
 def _throttle(host: str) -> None:
     import time
 
@@ -75,7 +97,9 @@ def guarded_get(url: str, *, headers=None, params=None, timeout=30, max_bytes=MA
     retries = 2
     for _ in range(8):
         u = urlsplit(url)
-        if u.scheme != "https" or not (u.hostname in ALLOWED_HOSTS or (u.hostname or "").endswith(ALLOWED_SUFFIXES)):
+        if u.scheme not in ("https", "http") or (u.scheme == "http" and not press_outlet_for(u.hostname, press_outlets())) \
+                or not (u.hostname in ALLOWED_HOSTS or (u.hostname or "").endswith(ALLOWED_SUFFIXES)
+                        or press_outlet_for(u.hostname, press_outlets())):
             raise BlockedHost(f"허용되지 않은 출처: {u.hostname}")
         _throttle(u.hostname)
         r = requests.get(url, headers=headers, params=params, timeout=timeout, allow_redirects=False, stream=True)
@@ -258,6 +282,60 @@ def search_openverse(cfg: dict, queries: list[str]) -> tuple[list[dict], list[st
     return out, notes
 
 
+META_IMG_RE = re.compile(r"<meta\s+[^>]*(?:property|name)=[\"'](?:og:image|twitter:image)(?::url)?[\"'][^>]*>", re.I)
+CONTENT_RE = re.compile(r"content=[\"']([^\"']+)[\"']", re.I)
+
+
+def article_images(html_text: str, base: str) -> list[str]:
+    """기사 페이지의 대표 사진 주소(og:image → twitter:image)."""
+    from urllib.parse import urljoin
+
+    out = []
+    for m in META_IMG_RE.finditer(html_text or ""):
+        c = CONTENT_RE.search(m.group(0))
+        if c:
+            u = urljoin(base, html.unescape(c.group(1)).strip())
+            if u not in out and re.search(r"(?i)\.(jpe?g|png|webp)(\?|$)|/photo/|/image", u):
+                out.append(u)
+    return out[:2]
+
+
+def search_press(cfg: dict, job: Path, allowed: bool, max_articles: int = 6) -> tuple[list[dict], list[str]]:
+    """팩트 시트 출처 기사 중 '등록 언론사' 기사의 대표 사진. 등록·규칙 허용이 둘 다 있어야 한다."""
+    outlets = press_outlets(cfg)
+    if not outlets:
+        return [], []
+    if not allowed:
+        return [], ["언론사 사진: 등록은 돼 있지만 현재 규칙 버전이 허용하지 않아 건너뜀"]
+    fs = paths.read_json(job / "factsheet.json", {}) or {}
+    arts, seen = [], set()
+    for cl in fs.get("claims") or []:
+        for s in cl.get("sources") or []:
+            u = s.get("url") or ""
+            o = press_outlet_for(urlsplit(u).hostname, outlets)
+            if o and u not in seen:
+                seen.add(u)
+                arts.append((u, s, cl, o))
+    out, notes = [], []
+    for u, s, cl, o in arts[:max_articles]:
+        try:
+            r = guarded_get(u, headers={"User-Agent": PRESS_UA}, max_bytes=5 * 1024 * 1024)
+            imgs = article_images(r.content.decode(r.encoding or "utf-8", "replace"), u)
+        except Exception as e:
+            notes.append(f"언론사 기사 열기 실패({o['name']}): {type(e).__name__}")
+            continue
+        for img in imgs:
+            if not press_outlet_for(urlsplit(img).hostname, [o]):
+                notes.append(f"언론사 사진 주소가 등록 도메인 밖이라 건너뜀: {urlsplit(img).hostname}")
+                continue
+            out.append({"source": "press", "query": "기사 사진", "fixed_relevance": 1.2,
+                        "title": s.get("title") or o["name"], "text": cl.get("claim") or "",
+                        "page_url": u, "file_url": img, "thumb_url": img, "referer": u,
+                        "license": "언론사 사용 허락 (이용자 등록" + (f": {o['basis']}" if o.get("basis") else "") + ")",
+                        "author": o["name"], "credit": f"사진: {o['name']}", "share_alike": False})
+    return out, notes
+
+
 def search_unsplash(cfg: dict, queries: list[str]) -> tuple[list[dict], list[str]]:
     key = (cfg.get("api_keys") or {}).get("unsplash")
     if not key:
@@ -317,7 +395,7 @@ def load_preview(cand: dict, cfg: dict) -> np.ndarray | None:
         h, w = img.shape[:2]
         cand["width"], cand["height"] = w, h
         return img
-    headers = {"User-Agent": ua(cfg)}
+    headers = {"User-Agent": PRESS_UA, "Referer": cand["referer"]} if cand.get("referer") else {"User-Agent": ua(cfg)}
     r = guarded_get(cand["thumb_url"], headers=headers)
     import cv2
 
@@ -327,13 +405,18 @@ def load_preview(cand: dict, cfg: dict) -> np.ndarray | None:
     return img
 
 
-def analyse(cand: dict, img: np.ndarray, band, out_dir: Path, idx: int) -> dict:
+def analyse(cand: dict, img: np.ndarray, band, out_dir: Path, idx: int, inset: bool = False) -> dict:
     subject, faces = smart_crop.subject_of(img)
     h, w = img.shape[:2]
     res = {"faces": len(faces), "subject": subject["kind"] if subject else None}
     for tag, (bw, bh) in (("916", (1080, 1920)), ("45", (1080, 1350))):
         info = smart_crop.plan_crop(w, h, bw, bh, subject, 0, bh, band)
-        crop = smart_crop.apply_crop(img, info)
+        if inset:                 # 원본 크기 기준으로 판정(미리보기 이미지는 작게 받은 것이라 크기로 판단하지 않음)
+            info = smart_crop.plan_inset(w, h, bw, bh, 0, bh, band)
+            crop = smart_crop.apply_inset(img, info, bw, bh)
+            res["layout"] = "inset"
+        else:
+            crop = smart_crop.apply_crop(img, info)
         import cv2
 
         p = out_dir / f"cand{idx}_{tag}.jpg"
@@ -365,7 +448,7 @@ def contact_sheet(cands: list[dict], out: Path) -> None:
     sheet.save(out)
 
 
-RANK = {"library": 0, "kogl1": 1, "wikimedia": 2, "flickr": 3, "unsplash": 3, "pexels": 3}
+RANK = {"library": 0, "press": 0, "kogl1": 1, "wikimedia": 2, "flickr": 3, "unsplash": 3, "pexels": 3}
 SOURCE_BONUS = {"library": 0.30, "kogl1": 0.10, "wikimedia": 0.05}
 STOP = {"the", "a", "an", "of", "and", "in", "on", "at", "for", "to", "with", "by", "from", "file", "jpg", "jpeg", "png",
         "photo", "image", "picture", "korea", "korean", "south", "filetype", "bitmap", "사진", "이미지"}
@@ -378,6 +461,8 @@ def tokens(s: str) -> set[str]:
 
 def relevance(cand: dict, queries: list[str]) -> float:
     """검색어 낱말이 사진 제목·설명·분류·태그에 얼마나 들어 있나 (0~1) × 검색어 순서 가중 + 출처 가산."""
+    if cand.get("fixed_relevance") is not None:          # 사안 기사 자체의 사진
+        return float(cand["fixed_relevance"])
     hay = " ".join([cand.get("title") or "", cand.get("text") or ""]).lower()
     hay_toks = tokens(hay)
     q = cand.get("query") or ""
@@ -442,8 +527,12 @@ def run(job: Path, queries: list[str], max_n: int | None = None) -> dict:
     band = tuple(get(c["checks"], "image.subject_band", list(smart_crop.DEFAULT_BAND)))
 
     max_up = float(get(c["checks"], "image.max_upscale", 1.6))
+    inset_max = float(get(c["checks"], "image.inset_max_upscale", 2.0))
     notes: list[str] = []
     found = search_library(meta["handle"], queries)
+    pr, pn = search_press(cfg, job, bool(get(c["checks"], "image.allow_registered_press", False)))
+    found += pr
+    notes += pn
     for x in found:
         x.setdefault("query", queries[0] if queries else "")
     seen_urls = set()
@@ -473,10 +562,11 @@ def run(job: Path, queries: list[str], max_n: int | None = None) -> dict:
             excluded.append({"title": cand["title"], "reason": f"미리보기 실패: {e}"})
             continue
         up = upscale_of(cand.get("width") or img.shape[1], cand.get("height") or img.shape[0])
-        if up > max_up:
-            excluded.append({"title": cand["title"], "reason": f"해상도 부족: 9:16 로 자르면 {up:.1f}배 확대(기준 {max_up}배)"})
+        iw = cand.get("width") or img.shape[1]
+        if up > max_up and (1080 - 2 * smart_crop.INSET_MARGIN) / iw > inset_max:
+            excluded.append({"title": cand["title"], "reason": f"해상도 부족: 가로 {iw}px — 사진 박스로도 {inset_max}배 넘게 확대됨"})
             continue
-        an = analyse(cand, img, band, pdir, len(picked) + 1)
+        an = analyse(cand, img, band, pdir, len(picked) + 1, inset=up > max_up)
         if an["faces"] and an["in_band"] is False:
             excluded.append({"title": cand["title"], "reason": "9:16 크롭에서 얼굴이 세이프존 대역 밖"})
             for k in ("preview_916", "preview_45"):
@@ -485,6 +575,8 @@ def run(job: Path, queries: list[str], max_n: int | None = None) -> dict:
         cand["analysis"] = an
         short = min(cand.get("width") or 0, cand.get("height") or 0)
         cand["warnings"] = [f"해상도 낮음: 짧은 변 {short}px < {min_side}px"] if short and short < min_side else []
+        if an.get("layout") == "inset":
+            cand["warnings"].append("작은 사진 → 흐린 배경 + 사진 박스로 배치(자르지 않음)")
         cand["no"] = len(picked) + 1
         picked.append(cand)
     contact_sheet(picked, job / "photo_candidates.png")
